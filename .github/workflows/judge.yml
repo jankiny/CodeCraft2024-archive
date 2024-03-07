@@ -25,6 +25,9 @@ jobs:
     - name: Test
       working-directory: ${{github.workspace}}/build
       run: ctest -C ${{env.BUILD_TYPE}}
+    
+    - name: Grant execute permission to PreliminaryJudge
+      run: chmod +x ./judge-linux/PreliminaryJudge
       
     # - name: List build directory contents
     #   run: ls -lah ${{github.workspace}}/build
