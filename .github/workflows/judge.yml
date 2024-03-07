@@ -26,9 +26,9 @@ jobs:
       working-directory: ${{github.workspace}}/build
       run: ctest -C ${{env.BUILD_TYPE}}
       
-    - name: List build directory contents
-      run: ls -lah ${{github.workspace}}/build
+    # - name: List build directory contents
+    #   run: ls -lah ${{github.workspace}}/build
 
-    # - name: Run Preliminary Judge
-    #   run: ./judge-linux/PreliminaryJudge ${{github.workspace}}/build/xxx -m ./judge-linux/maps/map1.txt
+    - name: Run Preliminary Judge
+      run: ./judge-linux/PreliminaryJudge ${{github.workspace}}/build/CodeCraft2024 -m ./judge-linux/maps/map1.txt
 
