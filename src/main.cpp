@@ -22,6 +22,7 @@ const int ROBOT_NUM = 10;                       // 机器人的数量
 const int BOAT_NUM = 10;                        // 轮船的数量
 const int BERTH_NUM = 10;                       // 泊位的数量
 const int MAX_GOOD_NUM = MAP_REAL_SIZE * MAP_REAL_SIZE + 10;    // 货物的最大数量，预留点空间
+const int TOP_K_SELECTED_BERTH_NUM = 2;         // 筛选距离最近的K个Berth
 //const double DIS_INTERSECT_EPS = 0.5;           // 相交距离误差
 //const double AVOID_ANGLE_SPEED_DIFF = M_PI / 8; // 避让时让角速度偏移的差值
 const double PREDICT_FRAME = 15;                // 预测的帧数
@@ -86,7 +87,7 @@ int g_frameId;
 int g_money;
 int g_boatCapacity;
 Berth g_berths[BERTH_NUM];
-vector<Point> berths_point; // Init时将Berth的位置进行打包，便于在创建Good时计算最近的Berth
+//vector<Point> berths_point; // Init时将Berth的位置进行打包，便于在创建Good时计算最近的Berth
 Boat g_boats[BOAT_NUM];
 //vector<Berth *> g_typeToStations[10];
 //vector<Berth *> g_stationsToGo[8]; // 物品类型对应去买卖的工作站
@@ -223,7 +224,24 @@ struct Good {
 private:
     void findBerth()
     {
-        calcPath(this->p, berths_point);
+        // 通过两点直线距离作为预估距离，选择top-n个最近的货物
+        vector<pair<double, Berth*>> distances;
+        for (auto berth: g_berths) {
+            double distance = CalcDis(this->p, berth.p);
+            distances.push_back(make_pair(distance, &berth));
+        }
+        sort(distances.begin(), distances.end(), [](const pair<double, Berth*>& a, const pair<double, Berth*>& b) {
+            return a.first < b.first;
+        });
+        vector<Berth> selectedBerths;
+        vector<Point> selectedBerthsPoint;
+        for (int i = 0; i < TOP_K_SELECTED_BERTH_NUM && i < distances.size(); ++i) {
+            selectedBerths.push_back(*distances[i].second);
+            selectedBerthsPoint.push_back((*distances[i].second).p);
+        }
+
+        // 计算Top-K直线距离的Berth
+        calcPath(this->p, selectedBerthsPoint);
         for (auto berth: g_berths) {
             // TODO: 检查Berth
             auto path = findPath(this->p, berth.p);
@@ -314,7 +332,7 @@ void Init()
         int id;
         scanf("%d", &id);
         scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transport_time, &g_berths[id].loading_speed);
-        berths_point.push_back(g_berths[id].p);     // 便于在创建Good时计算最近的Berth
+//        berths_point.push_back(g_berths[id].p);     // 便于在创建Good时计算最近的Berth
     }
     // 船的容积
     scanf("%d", &g_boatCapacity);
@@ -350,8 +368,8 @@ int main()
             int x, y;   // 新增货物坐标
             int val;    // 新增货物金额(<= 1000)
             scanf("%d%d%d", &x, &y, &val);
-//            Good g(x, y, val);
-//            g_goods.push_back(g);
+            Good g(x, y, val);
+            g_goods.push_back(g);
         }
         for(int i = 0; i < ROBOT_NUM; i ++) // 机器人(Robot)
         {
