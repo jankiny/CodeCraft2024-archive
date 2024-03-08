@@ -23,6 +23,8 @@ const int BOAT_NUM = 10;                        // 轮船的数量
 const int BERTH_NUM = 10;                       // 泊位的数量
 const int MAX_GOOD_NUM = MAP_REAL_SIZE * MAP_REAL_SIZE + 10;    // 货物的最大数量，预留点空间
 const int TOP_K_SELECTED_BERTH_NUM = 2;         // 筛选距离最近的K个Berth
+const int MAX_PATH_STEP = 4 * MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈)
+const int MAX_RESET_PATH_STEP = 10;             // 最大纠正步数
 //const double DIS_INTERSECT_EPS = 0.5;           // 相交距离误差
 //const double AVOID_ANGLE_SPEED_DIFF = M_PI / 8; // 避让时让角速度偏移的差值
 const double PREDICT_FRAME = 15;                // 预测的帧数
@@ -49,6 +51,12 @@ struct Point {
     int y;
 
     Point(int x = 0, int y = 0) : x(x), y(y) {}
+    void operator=(const Point& other)
+    {
+        x = other.x;
+        y = other.y;
+        return;
+    }
     bool operator==(const Point& other) const
     {
         return x == other.x && y == other.y;
@@ -59,10 +67,72 @@ struct Point {
     }
 };
 
+const Point INVALID_POINT = {-1, -1};       // 无效点
+
+struct Path {
+    Point path[MAX_PATH_STEP];  // 路径点
+    Path() : pathHead(0), pathRear(0), dis(0) {}
+
+    void printPath() {
+        std::clog << "Dis" << dis << endl;
+        for (int i = pathHead; i < pathRear; ++i) {
+            std::clog << "(" << path[i].x << "," << path[i].y << ")";
+        }
+        std::clog << endl;
+    }
+
+    bool checkCurrPoint(const Point& p) {
+        if (pathHead == 0 || p == path[pathHead])
+            return true;
+        else
+            return false;
+    }
+
+    Point getNextPoint() {
+        if (pathHead < MAX_PATH_STEP) {
+            return path[++pathHead];
+        } else {
+            // 处理数组越界的情况
+            std::cerr << "Path is too long, (" << pathHead <<")exceeding MAX_PATH_STEP." << std::endl;
+            return INVALID_POINT;
+        }
+    }
+
+    int getDis() {
+        return dis;
+    }
+    // 添加路径点
+    void addPoint(const Point& p) {
+        if (pathRear < MAX_PATH_STEP) {
+            path[pathRear++] = p;
+            ++dis;
+        } else {
+            // 处理数组越界的情况
+             std::cerr << "Path is too long, (" << pathRear <<")exceeding MAX_PATH_STEP." << std::endl;
+        }
+    }
+    // 倒转路径点
+    void reversePath() {
+        for (int i = pathHead; i < pathRear / 2; ++i) {
+            // 交换元素，使用临时变量保存一个元素的值
+            Point temp = path[i];
+            path[i] = path[pathRear - 1 - i];
+            path[pathRear - 1 - i] = temp;
+        }
+    }
+
+private:
+    int pathHead;               // path头
+    int pathRear;               // path尾
+    int dis;                    // 路径的总距离
+
+};
+
 struct Berth
 {
     int id;
     Point p;
+    Point pullP;
     int transport_time;
     int loading_speed;
     Berth(){}
@@ -71,6 +141,11 @@ struct Berth
         this -> p.y = y;
         this -> transport_time = transport_time;
         this -> loading_speed = loading_speed;
+    }
+    Point CalcPullPoint() {
+        this -> pullP.x = this -> p.x + 3;
+        this -> pullP.y = this -> p.y;
+        return this -> pullP;
     }
 };
 
@@ -87,7 +162,7 @@ int g_frameId;
 int g_money;
 int g_boatCapacity;
 Berth g_berths[BERTH_NUM];
-//vector<Point> berths_point; // Init时将Berth的位置进行打包，便于在创建Good时计算最近的Berth
+vector<Point> berthsPullPoint(BERTH_NUM); // Init时将Berth的位置进行打包，便于在创建Good时计算最近的Berth
 Boat g_boats[BOAT_NUM];
 //vector<Berth *> g_typeToStations[10];
 //vector<Berth *> g_stationsToGo[8]; // 物品类型对应去买卖的工作站
@@ -95,12 +170,12 @@ int g_recycleTypeCount[8];               // 当前可回收|物品类型的计�
 //bitset<8> g_sellLock[MAX_WORK_STATION_SIZE];
 //bitset<MAX_WORK_STATION_SIZE> g_buyLock;
 int g_buyCount;
-unordered_map<long long, vector<Point>> hash_paths; // 两点最短路径的Cache， TODO：将path对应的距离也进行存储
+unordered_map<long long, Path> hash_paths; // 两点最短路径的Cache
 
 struct Robot;
 vector<Robot> g_robots(ROBOT_NUM);
 struct Good;
-vector<Good> g_goods;
+vector<Good> g_goods(MAX_GOOD_NUM);
 
 template<> struct std::hash<Point> {
     size_t operator()(const Point& p) const {
@@ -112,11 +187,6 @@ template<> struct std::hash<Point> {
 inline double CalcDis(const Point &p1, const Point &p2)
 {
     return sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y));
-}
-
-inline int CalcPathDis(const vector<Point> &path)
-{
-    return path.size();
 }
 
 inline bool IsEq(double x1, double x2, const double eps = EPS)
@@ -132,7 +202,7 @@ inline double CalcSpeed(double x, double y)
 }
 
 
-// 对两个坐标进行hash
+// 对两个坐标点进行hash
 long long hashTwoPoints(const Point& a, const Point& b) {
     const int shift = 16;    // 每8位存储一个值（使用16位以确保没有溢出）
     // 地图的大小是200，因此可以使用8位二进制存储（256）。
@@ -141,18 +211,33 @@ long long hashTwoPoints(const Point& a, const Point& b) {
            ((long long)b.x << (shift * 1)) | ((long long)b.y << (shift * 0));
 }
 
+// 对一个坐标点进行hash
+long hashOnePoint(const Point& a) {
+    const int shift = 16;    // 每8位存储一个值（使用16位以确保没有溢出）
+    // 地图的大小是200，因此可以使用8位二进制存储（256）。
+    // 通过位操作将[a.x, a.y, b.x, b.y]组合成一个long long类型的值，每个占8位
+    return ((long long)a.x << (shift * 1)) | ((long long)a.y << (shift * 0));
+}
+
 // 检查坐标(x, y)是否在地图内以及是否可以走
 bool isValid(int x, int y) {
-    return x >= 0 && x < MAP_ARRAY_SIZE && y >= 0 && y < MAP_ARRAY_SIZE && (g_map[x][y] == '.'|| g_map[x][y] == 'A' || g_map[x][y] == 'B');
+    return x >= 0 && x < MAP_ARRAY_SIZE && y >= 0 && y < MAP_ARRAY_SIZE &&
+    (g_map[x][y] == '.'|| g_map[x][y] == 'A' || g_map[x][y] == 'B');
 }
 
 // bfs算法查找单源最短路径，结果存在hash_paths中(使用findPath来查找)
 void calcPath(Point start, vector<Point>& endPoints) {
     queue<Point> q;
     q.push(start);
-    unordered_map<Point, Point> prev; // 记录前驱节点，用于重建从起点到该终点的最短路径
-    prev[start] = start; // 起点的前驱是自己
-    vector<vector<bool>> visited(MAP_REAL_SIZE, vector<bool>(MAP_REAL_SIZE, false));
+    Point prev[MAP_REAL_SIZE][MAP_REAL_SIZE];   // 记录前驱节点，用于重建从起点到该终点的最短路径
+    // 初始化prev数组
+    for (int i = 0; i < MAP_REAL_SIZE; i++) {
+        for (int j = 0; j < MAP_REAL_SIZE; j++) {
+            prev[i][j] = INVALID_POINT;
+        }
+    }
+    prev[start.x][start.y] = start; // 起点的前驱是自己
+    bool visited[MAP_REAL_SIZE][MAP_REAL_SIZE] = {};
     visited[start.x][start.y] = true;
 
     while (!q.empty()) {
@@ -164,13 +249,17 @@ void calcPath(Point start, vector<Point>& endPoints) {
             long long hashKey = hashTwoPoints(start, endPoint);
             if (cur == endPoint) {
                 if (hash_paths.find(hashKey) == hash_paths.end()) { // 如果路径未被记录
-                    vector<Point> path;
-                    for (Point p = cur; p != start; p = prev[p]) {
-                        path.push_back(p);
+                    Path path;
+                    for (Point p = cur; p != start; p = prev[p.x][p.y]) {
+                        path.addPoint(p);
                     }
-                    path.push_back(start);
-                    reverse(path.begin(), path.end());
+                    path.addPoint(start);
+                    path.reversePath();
                     hash_paths[hashKey] = path;
+//                    clog << "Find a path: ";
+//                    clog << "(" << start.x << "," << start.y << ")" << " --> ";
+//                    clog << "(" << endPoint.x << "," << endPoint.y << ")";
+//                    path.printPath();
                 }
                 continue;
             }
@@ -181,7 +270,7 @@ void calcPath(Point start, vector<Point>& endPoints) {
             Point next(cur.x + DIRECTION_TO_GO[i][0], cur.y + DIRECTION_TO_GO[i][1]);
             if (isValid(next.x, next.y) && !visited[next.x][next.y]) {
                 visited[next.x][next.y] = true;
-                prev[next] = cur; // 记录到达next的前驱节点是cur
+                prev[next.x][next.y] = cur; // 记录到达next的前驱节点是cur
                 q.push(next);
             }
         }
@@ -189,8 +278,8 @@ void calcPath(Point start, vector<Point>& endPoints) {
 }
 
 // 从hash_paths中获取对应两点的最短路径
-const vector<Point>& findPath(Point start, Point end) {
-    static const vector<Point> emptyPath; // 静态空路径
+const Path& findPath(Point start, Point end) {
+    static const Path emptyPath; // 静态空路径
     long long hashKey = hashTwoPoints(start, end);
     auto it = hash_paths.find(hashKey);
     if (it != hash_paths.end()) {
@@ -209,8 +298,9 @@ struct Good {
 
     Berth *targetBerth;         // 目标泊位
     int disToTargetBerth;       // 到目标泊位的距离
-    vector<Point> pathToTargetBerth;    // 到最近泊位的路径，TODO:到N个泊位(Berth)的路径
+    Path pathToTargetBerth;    // 到最近泊位的路径，TODO:到N个泊位(Berth)的路径
 
+    Good() {}
     Good(int x, int y, int val)
     {
         p.x = x;
@@ -219,33 +309,32 @@ struct Good {
 
         restFrame = 1000;
         hasRobotLocked = false;
-        findBerth();
+//        findBerth();
     }
-private:
     void findBerth()
     {
         // 通过两点直线距离作为预估距离，选择top-n个最近的货物
-        vector<pair<double, Berth*>> distances;
-        for (auto berth: g_berths) {
-            double distance = CalcDis(this->p, berth.p);
-            distances.push_back(make_pair(distance, &berth));
-        }
-        sort(distances.begin(), distances.end(), [](const pair<double, Berth*>& a, const pair<double, Berth*>& b) {
-            return a.first < b.first;
-        });
-        vector<Berth> selectedBerths;
-        vector<Point> selectedBerthsPoint;
-        for (int i = 0; i < TOP_K_SELECTED_BERTH_NUM && i < distances.size(); ++i) {
-            selectedBerths.push_back(*distances[i].second);
-            selectedBerthsPoint.push_back((*distances[i].second).p);
-        }
+//        vector<pair<double, Berth*>> distances;
+//        for (auto berth: g_berths) {
+//            double distance = CalcDis(this->p, berth.p);
+////            distances.push_back(make_pair(distance, &berth));
+//        }
+//        sort(distances.begin(), distances.end(), [](const pair<double, Berth*>& a, const pair<double, Berth*>& b) {
+//            return a.first < b.first;
+//        });
+//        vector<Berth> selectedBerths;
+//        vector<Point> selectedBerthsPoint;
+//        for (int i = 0; i < TOP_K_SELECTED_BERTH_NUM && i < distances.size(); ++i) {
+//            selectedBerths.push_back(*distances[i].second);
+//            selectedBerthsPoint.push_back((*distances[i].second).p);
+//        }
 
         // 计算Top-K直线距离的Berth
-        calcPath(this->p, selectedBerthsPoint);
+        calcPath(this->p, berthsPullPoint);
         for (auto berth: g_berths) {
             // TODO: 检查Berth
             auto path = findPath(this->p, berth.p);
-            int dis = CalcPathDis(path);
+            int dis = path.getDis();
             if (targetBerth == nullptr || dis < disToTargetBerth) {
                 targetBerth = &berth;
                 disToTargetBerth = dis;
@@ -263,15 +352,14 @@ struct Robot
     int goods;          // 是否携带物品（0表示未携带物品，1表示携带物品）
     int status;         // 状态（0表示恢复状态，1表示正常运行状态）
 
+    int move;
     bool get;                   // 是否取货
     int disToTargetGood;        // 到目标货物的距离
     Good *targetGood;           // 目标货物
     bool pull;                  // 是否放置货物
     int disToTargetBerth;       // 到目标泊位的距离
     Berth *targetBerth;         // 目标泊位
-
-    int nextStep;               // 路径中的下一个位置。 TODO：-1表示路径为空。
-    vector<Point> path;         // 路径
+    Path path;                  // 路径
 
     Robot() {}
     Robot(int startX, int startY) {
@@ -284,9 +372,31 @@ struct Robot
         get = false;
         pull = false;
         targetBerth = nullptr;
+
+        targetBerth = &g_berths[0];
+        calcPath(this->p, berthsPullPoint);
+        path = findPath(this->p, targetBerth->pullP);
     }
 
-    void findSuitableGood()
+    void CalcNextStep()
+    {
+        // TODO: 矫正path step
+//        int reset_step = -1;
+//        for (int i = 1; i <= MAX_RESET_PATH_STEP; ++i) {
+//            auto currPoint = path[nextStep-i];
+//            if (currPoint == this->p) {
+//                break;
+//            }
+//        }
+        if (path.checkCurrPoint(p)) {
+            auto nextPoint = path.getNextPoint();
+            move = CalcMoveDirection(nextPoint);
+            return;
+        }
+        move = 0;
+    }
+
+    void FindSuitableGood()
     {
         if (targetGood != nullptr) return;
 
@@ -308,6 +418,8 @@ struct Robot
 
 
     }
+
+
 
 private:
     int CalcMoveDirection(const Point &np) const
@@ -332,7 +444,10 @@ void Init()
         int id;
         scanf("%d", &id);
         scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transport_time, &g_berths[id].loading_speed);
-//        berths_point.push_back(g_berths[id].p);     // 便于在创建Good时计算最近的Berth
+        g_berths[id].p.x += 1;
+        g_berths[id].p.y += 1;
+        berthsPullPoint[id] = g_berths[id].CalcPullPoint();
+//        berthsPullPoint.push_back(g_berths[id].p);
     }
     // 船的容积
     scanf("%d", &g_boatCapacity);
@@ -345,9 +460,31 @@ void Init()
 
 void HandleFrame()
 {
-    for(int i = 0; i < ROBOT_NUM; i ++)
-        printf("move %d %d\n", i, rand() % 4);
+//    for (auto good: g_goods) {
+//        if (good.targetBerth == nullptr)
+//            good.findBerth();
+//    }
+
+    for(auto robot: g_robots) {
+        robot.CalcNextStep();
+        printf("move %d %d\n", robot.id, robot.move);
+    }
+
+
+    for (auto good: g_goods) {
+        --good.restFrame;
+    }
     return;
+//    Point a = g_robots[0].p;
+////    clog << "A: (" << a.x << "," << a.y << ")";
+//    Point b = g_berths[0].pullP;
+////    Point b(4, 112);
+////    clog << "  B:(" << b.x << "," << b.y << ")";
+//
+//    vector<Point> berthsPoint(10);
+//    berthsPoint[0] = b;
+//    calcPath(a, berthsPoint);
+//    g_robots[0].path = findPath(g_robots[0].p, b);
 }
 
 int main()
@@ -371,10 +508,12 @@ int main()
             Good g(x, y, val);
             g_goods.push_back(g);
         }
-        for(int i = 0; i < ROBOT_NUM; i ++) // 机器人(Robot)
-        {
-            int sts;
-            scanf("%d%d%d%d", &g_robots[i].goods, &g_robots[i].p.x, &g_robots[i].p.y, &sts);
+        for(int i = 0; i < ROBOT_NUM; i ++) {   // 机器人(Robot)
+            g_robots[i].id = i;
+            scanf("%d%d%d%d", &g_robots[i].goods, &g_robots[i].p.x, &g_robots[i].p.y, &g_robots[i].status);
+            g_robots[i].p.x += 1;
+            g_robots[i].p.y += 1;
+            g_robots[i].Init();
         }
         for(int i = 0; i < 5; i ++)     // 船(Boat)
             scanf("%d%d\n", &g_boats[i].status, &g_boats[i].pos);
