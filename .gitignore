@@ -1,6 +1,7 @@
-# Game replay files
-#replay/
-#replayer/
+# 2023Code
+Main_2023.cpp
+judge-win/
+replay/
 
 # Jetbrain files
 .idea/
