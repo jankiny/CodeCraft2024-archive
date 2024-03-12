@@ -2,6 +2,8 @@
 Main_2023.cpp
 judge-win/
 replay/
+PreliminaryJudge.exe
+log*
 
 # Jetbrain files
 .idea/
