@@ -311,7 +311,7 @@ struct Good {
 
     void Init() {
         targetBerth = nullptr;
-        disToTargetBerth = 0;
+        disToTargetBerth = 40000;
         pathToTargetBerth = nullptr;
 
         FixPos(this->p);  // 得到的位置是从0开始的，+1与地图保持一致
@@ -338,22 +338,28 @@ struct Good {
 
         // 计算Top-K直线距离的Berth
         CalcPath(this->p, berthsPullPoint);
-        for (auto berth: g_berths) {
+
+//        for (auto g_berth: g_berths) {
             // TODO: 检查Berth
-            auto path = FindPath(this->p, berth.pullP);
+        for (auto & g_berth : g_berths) {
+            auto path = FindPath(this->p, g_berth.pullP);
             if (path == nullptr) continue;  // 货物无法到达该泊位
 
             int dis = path->getDis();
-            if (targetBerth == nullptr || dis < disToTargetBerth) {
-                targetBerth = &berth;
-                disToTargetBerth = dis;
-                pathToTargetBerth = path;
+            if (this->targetBerth == nullptr || dis < this->disToTargetBerth) {
+                this->targetBerth = &g_berth;
+
+                this->disToTargetBerth = dis;
+                this->pathToTargetBerth = path;
             }
         }
 
         // 没有可以到达的Berth，货物不可运送
         if (targetBerth == nullptr)
             this->canShip = false;
+        else {
+            //outGetPull << "findBerth berth_x_y:" << this->targetBerth->p.x << " " << this->targetBerth->p.y << endl;
+        }
     }
 };
 
@@ -511,18 +517,20 @@ struct Robot {
             auto nextPoint = path->getNextPoint();
             move = CalcMoveDirection(nextPoint);
             // 检查是否走到最后一步的前一步，更新get或pull指令
-            if (this->targetGood != nullptr && this->targetGood->p == nextPoint){
+            if (this->targetGood != nullptr && this->targetGood->p == nextPoint) {
                 this->get = true;
-                outGetPull << "robot:" << id <<" setget"<<endl;
+                this->targetBerth = this->targetGood->targetBerth;
+
             }
 
-            outGetPull << "robot:" << id << " " <<nextPoint.x <<" "<<nextPoint.y<<(this->targetBerth != nullptr) << endl;
+            //outGetPull << "robot:" << id << " " <<nextPoint.x <<" "<<nextPoint.y<<(this->targetBerth != nullptr) << endl;
 
-            if(this->targetBerth != nullptr) outGetPull <<"------------"<<this->targetBerth->p.x <<" "<< this->targetBerth->p.y <<endl;
+            if (this->targetBerth != nullptr)
+                outGetPull << "------------" << this->targetBerth->p.x << " " << this->targetBerth->p.y << endl;
 
-            if (this->targetBerth != nullptr && this->targetBerth->p == nextPoint){
+            if (this->targetBerth != nullptr && this->targetBerth->p == nextPoint) {
                 this->pull = true;
-                outGetPull << "robot:" << id <<" setget"<<endl;
+                outGetPull << "robot:" << id << " setget" << endl;
             }
 
             return;
@@ -555,6 +563,9 @@ struct Robot {
                 if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && dis > curr->good.restFrame)) {
                     vpdToTargetBerth = valuePerDis;
                     this->targetGood = &curr->good;
+
+
+
                     this->targetGood->hasRobotLocked = true; // 锁定货物
                     this->path = pathToGood;
                 }
@@ -581,8 +592,10 @@ private:
 void HandleFrame(int frame) {
     // 为新增的每个货物找到最近的泊位（避免重复计算）
     for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
-        if (curr->good.canShip != false && curr->good.targetBerth == nullptr) {
+        if (curr->good.canShip && curr->good.targetBerth == nullptr) {
             curr->good.findBerth();
+
+//            outGetPull << "123currGoodTargetBerth:" << (curr->good.targetBerth == nullptr)<<endl;
         }
     }
 
@@ -614,12 +627,12 @@ void HandleFrame(int frame) {
         if (g_robots[i].get) {
             printf("get %d\n", i);
 
-            outGetPull << "frame:"<<frame<<" robot:"<<i<<" get" << endl;
+            outGetPull << "frame:" << frame << " robot:" << i << " get" << endl;
 
         } else if (g_robots[i].pull) {
             printf("pull %d\n", i);
 
-            outGetPull << "frame:"<<frame<<" robot:"<<i<<" pull" << endl;
+            outGetPull << "frame:" << frame << " robot:" << i << " pull" << endl;
         }
     }
 
@@ -638,7 +651,7 @@ void Init() {
     for (int i = 1; i <= MAP_REAL_SIZE; i++)
         scanf("%s", g_map[i] + 1);
     // 泊位（Berth）数据
-    outFile << g_map[3][113] <<" " << g_map[6][116] << " " << g_map[172][3]<<" "<<g_map[175][6] << endl;
+    outFile << g_map[3][113] << " " << g_map[6][116] << " " << g_map[172][3] << " " << g_map[175][6] << endl;
     for (int i = 0; i < BERTH_NUM; i++) {
         int id;
         scanf("%d", &id);
