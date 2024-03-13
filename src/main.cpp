@@ -19,6 +19,7 @@ using namespace std;
 
 ofstream outFile("log.txt", ios::trunc);                  //日志文件
 ofstream outGetPull("log_get_pull.txt", ios::trunc);
+ofstream outHit("log_hit.txt", ios::trunc);
 const double EPS = 1e-7;                        // 浮点数精度
 const double FRAME_COUNT = 50;                  // 1s帧数
 const int TOTAL_FRAME = 15000;                   // 总帧数
@@ -30,7 +31,7 @@ const int BOAT_NUM = 10;                        // 轮船的数量
 const int BERTH_NUM = 10;                       // 泊位的数量
 const int MAX_GOOD_NUM = MAP_REAL_SIZE * MAP_REAL_SIZE + 10;    // 货物的最大数量，预留点空间
 const int TOP_K_SELECTED_BERTH_NUM = 2;         // 筛选距离最近的K个Berth
-const int MAX_PATH_STEP = 4 * MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈)
+const int MAX_PATH_STEP = 4 * MAP_REAL_SIZE + MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈) + 倒退预留大小
 const int MAX_RESET_PATH_STEP = 10;             // 最大纠正步数
 //const double DIS_INTERSECT_EPS = 0.5;           // 相交距离误差
 //const double AVOID_ANGLE_SPEED_DIFF = M_PI / 8; // 避让时让角速度偏移的差值
@@ -78,18 +79,18 @@ const Point INVALID_POINT = {-1, -1};       // 无效点
 
 struct Path {
     Point path[MAX_PATH_STEP];  // 路径经过的点
-    Path() : pathHead(0), pathRear(0), dis(0) {}
+    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(0) {}
 
     void printPath() {
-        std::clog << "Dis" << dis << endl;
+        outFile << "printPath" << dis << endl;
         for (int i = pathHead; i < pathRear; ++i) {
-            std::clog << "(" << path[i].x << "," << path[i].y << ")";
+            outFile << "(" << path[i].x << "," << path[i].y << ")";
         }
-        std::clog << endl;
+        outFile << endl;
     }
 
     bool checkCurrPoint(const Point &p) {
-        if (pathHead == 0 || p == path[pathHead])
+        if (pathHead == MAP_REAL_SIZE || p == path[pathHead])
             return true;
         else
             return false;
@@ -97,12 +98,19 @@ struct Path {
 
     Point getNextPoint() {
         if (pathHead < MAX_PATH_STEP) {
-            return path[++pathHead];
+            pathHead++;
+            //outFile << "getPoint" << pathHead << endl;
+            return path[pathHead];
         } else {
             // 处理数组越界的情况
             std::cerr << "Path is too long, (" << pathHead << ")exceeding MAX_PATH_STEP." << std::endl;
             return INVALID_POINT;
         }
+    }
+
+    Point getBeforePoint(){ // TODO
+        pathHead = pathHead - 2;
+        return path[pathHead];
     }
 
     int getDis() {
@@ -112,6 +120,7 @@ struct Path {
     // 添加路径点
     void addPoint(const Point &p) {
         if (pathRear < MAX_PATH_STEP) {
+            //outFile << "addPoint" << pathRear << endl;
             path[pathRear++] = p;
             ++dis;
         } else {
@@ -122,12 +131,16 @@ struct Path {
 
     // 倒转路径点
     void reversePath() {
-        for (int i = pathHead; i < pathRear / 2; ++i) {
+        //printPath();
+        //outFile << "pathHead（" << pathHead <<"）(pathRear - pathHead) / 2 + pathHead " << (pathRear - pathHead) / 2 + pathHead <<endl;
+        for (int i = pathHead; i < (pathRear - pathHead) / 2 + pathHead ; ++i) {
             // 交换元素，使用临时变量保存一个元素的值
             Point temp = path[i];
-            path[i] = path[pathRear - 1 - i];
-            path[pathRear - 1 - i] = temp;
+            path[i] = path[pathRear - 1 - i + pathHead];
+            path[pathRear - 1 - i + pathHead] = temp;
         }
+        //outFile <<" afterReverse" << endl;
+        //printPath();
     }
 
 private:
@@ -500,6 +513,18 @@ struct Robot {
         }
     }
 
+    bool CanHit(Point np){
+        for(int i = 0;i < ROBOT_NUM;i++){
+            if(i == this->id){
+                continue;
+            }
+            if(np.x == g_robots[i].p.x && np.y == g_robots[i].p.y){
+                return true;
+            }
+        }
+        return false;
+    }
+
     void CalcNextStep() {
         // TODO: 矫正path step
 //        int reset_step = -1;
@@ -513,9 +538,29 @@ struct Robot {
         this->get = false;
         this->pull = false;
 
+        //if(this->path != nullptr)outFile << " checkCurr" << " " << this->path->checkCurrPoint(p) <<endl;
         if (this->path != nullptr && this->path->checkCurrPoint(p)) {
             auto nextPoint = path->getNextPoint();
+
+            if(CanHit(nextPoint)){
+
+                nextPoint = path->getBeforePoint();
+//                if(CanHit(nextPoint)){
+//                    move = -1;
+//                }
+                //else {
+                move = CalcMoveDirection(nextPoint);
+                //}
+                this->p.x = nextPoint.x;
+                this->p.y = nextPoint.y;
+                return;
+            }
+
+
             move = CalcMoveDirection(nextPoint);
+
+
+
             // 检查是否走到最后一步的前一步，更新get或pull指令
             if (this->targetGood != nullptr && this->targetGood->p == nextPoint) {
                 this->get = true;
@@ -533,7 +578,11 @@ struct Robot {
                 outGetPull << "robot:" << id << " setget" << endl;
             }
 
+            this->p.x = nextPoint.x;
+            this->p.y = nextPoint.y;
+
             return;
+
         }
         // TODO：走错就重新规划
         move = -1;
@@ -560,7 +609,7 @@ struct Robot {
 
                 int dis = pathToGood->getDis();
                 double valuePerDis = curr->good.value / (curr->good.pathToTargetBerth->getDis() + dis);
-                if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && dis > curr->good.restFrame)) {
+                if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && dis < curr->good.restFrame)) {
                     vpdToTargetBerth = valuePerDis;
                     this->targetGood = &curr->good;
 
@@ -601,6 +650,9 @@ void HandleFrame(int frame) {
 
     // 此处策略：如果机器人当前有工作：计算机器人下一步动作
     for (int i = 0; i < ROBOT_NUM; i++) {
+
+        outFile << "robot before cal:" << i <<" " << g_robots[i].p.x <<" " << g_robots[i].p.y << endl;
+
         outFile << "------------status robot" << i << " :" << g_robots[i].status << " " << g_robots[i].goods << " "
                 << (g_robots[i].getTargetGood() != nullptr) << " " << (g_robots[i].getTargetBerth() != nullptr) << endl;
         // 对机器人的四个状态进行处理
@@ -620,6 +672,9 @@ void HandleFrame(int frame) {
                  ")" << endl;
             continue;
         }
+
+        outFile << "robot after cal:" << i <<" " << g_robots[i].p.x <<" " << g_robots[i].p.y << endl;
+
         // 输出机器人控制指令
         if (g_robots[i].move != -1)
             printf("move %d %d\n", i, g_robots[i].move);
@@ -685,6 +740,8 @@ int main() {
 
         outFile << g_frameId << " --------------------------------------------------------- " << endl;
 
+        outHit<< g_frameId << " --------------------------------------------------------- " << endl;
+
         int num;
         scanf("%d", &num);
 
@@ -707,9 +764,13 @@ int main() {
         for (int i = 0; i < ROBOT_NUM; i++) {   // 机器人(Robot)
             g_robots[i].id = i;
             scanf("%d%d%d%d", &g_robots[i].goods, &g_robots[i].p.x, &g_robots[i].p.y, &g_robots[i].status);
+
+            g_robots[i].CheckStatus();
+
             outFile << "--------" << i << "  :" << setw(3) << g_robots[i].goods << " " << setw(3) << g_robots[i].p.x
                     << " " << setw(3) << g_robots[i].p.y << " " << g_robots[i].status << endl;
-            g_robots[i].CheckStatus();
+
+
         }
 
         outFile << "----boat" << endl;
