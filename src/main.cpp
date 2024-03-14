@@ -23,7 +23,7 @@ ofstream outHit("log_hit.txt", ios::trunc);
 const double EPS = 1e-7;                        // 浮点数精度
 const double FRAME_COUNT = 50;                  // 1s帧数
 const int TOTAL_FRAME = 15000;                   // 总帧数
-const int STOP_Frame = 980;                          //停留时间
+const int STOP_FRAME = 980;                     // 停留时间，20帧用于掉帧冗余
 
 //const int LIMIT_BUY_FRAME = TOTAL_FRAME - 150;  // 终止购买物品的帧数
 const int MAP_ARRAY_SIZE = 210;                 // 地图数组大小，预留一点空间
@@ -33,7 +33,7 @@ const int BOAT_NUM = 10;                        // 轮船的数量
 const int BERTH_NUM = 10;                       // 泊位的数量
 const int MAX_GOOD_NUM = MAP_REAL_SIZE * MAP_REAL_SIZE + 10;    // 货物的最大数量，预留点空间
 const int TOP_K_SELECTED_BERTH_NUM = 2;         // 筛选距离最近的K个Berth
-const int MAX_PATH_STEP = 10 * MAP_REAL_SIZE + MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈) + 倒退预留大小
+const int MAX_PATH_STEP = 4 * MAP_REAL_SIZE + MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈) + 倒退预留大小
 const int MAX_RESET_PATH_STEP = 10;             // 最大纠正步数
 //const double DIS_INTERSECT_EPS = 0.5;           // 相交距离误差
 //const double AVOID_ANGLE_SPEED_DIFF = M_PI / 8; // 避让时让角速度偏移的差值
@@ -95,7 +95,7 @@ const Point INVALID_POINT = {-1, -1};       // 无效点
 
 struct Path {
     Point path[MAX_PATH_STEP];  // 路径经过的点
-    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {}
+    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {} // TODO：dis(1)可能会导致BUG
 
     void printPath() {
         outHit << "--------printPath" << dis << endl;
