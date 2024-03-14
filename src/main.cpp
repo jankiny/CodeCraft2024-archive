@@ -20,6 +20,7 @@ using namespace std;
 ofstream outFile("log.txt", ios::trunc);                  //日志文件
 ofstream outGetPull("log_get_pull.txt", ios::trunc);
 ofstream outHit("log_hit.txt", ios::trunc);
+ofstream logBoat("log_boat.txt", ios::trunc);
 const double EPS = 1e-7;                        // 浮点数精度
 const double FRAME_COUNT = 50;                  // 1s帧数
 const int TOTAL_FRAME = 15000;                   // 总帧数
@@ -236,12 +237,14 @@ struct Berth {
     int id;
     Point p;
     Point pullP;
-    int transport_time;
-    int loading_speed;
+    int transportTime;
+    int loadingSpeed;
+    int goodValue;
 
     Berth() {}
 
     void Init() {
+        this->goodValue = 0;
         FixPos(this->p);  // 得到的位置是从0开始的，+1与地图保持一致
         CalcPullPoint();
     }
@@ -528,6 +531,7 @@ struct Robot {
     Point p;             // 当前坐标
     int goods;          // 是否携带物品（0表示未携带物品，1表示携带物品）
     int status;         // 状态（0表示恢复状态，1表示正常运行状态）
+    int value;          // 携带的货物价值
 
     Path *path;                  // 路径
     int move;                   // 移动方向
@@ -535,6 +539,7 @@ struct Robot {
     // 目标货物
     void setTargetGood(Good &good) {
         this->targetGood = &good;
+        this->value = this->targetGood->value;      // 记录货物价值
         this->targetBerth = nullptr;
     }
 
@@ -545,8 +550,12 @@ struct Robot {
     bool get;                   // 是否取货
 
     // 目标泊位
-    void setTargetBerth(Berth &berth) {
-        this->targetBerth = &berth;
+    void setTargetBerth(Good *good) {
+        this->targetBerth = good->targetBerth;
+        this->path->resetHead();
+        this->path = good->pathToTargetBerth;
+        this->path->printPath();
+        this->path->resetHead();
         this->targetGood = nullptr;
     }
 
@@ -567,6 +576,14 @@ struct Robot {
         targetBerth = nullptr;
         goods = 0;
         status = 1;
+        value = 0;
+    }
+
+    void resetStatus() {
+        this->targetBerth = nullptr;
+        this->targetGood = nullptr;
+        this->path = nullptr;
+        this->value = 0;    // 清除携带货物价值
     }
 
     void CheckStatus() {
@@ -577,26 +594,17 @@ struct Robot {
         if (status == 0) return;
         // 当前处在“正常状态且正在送货”, 当前点处在泊位，货物已送出：重置机器人状态为“正常状态但没有分配任务”
         if (this->targetBerth != nullptr && this->goods == 0 && this->p == this->targetBerth->pullP) {
-            this->targetBerth = nullptr;
-            this->targetGood = nullptr;
-            this->path = nullptr;
+            this->resetStatus();
         }
 
         // 错误状态   取货超时
         if(this->targetBerth != nullptr && this->goods == 0 && this->p != this->targetBerth->pullP){
-            this->targetBerth = nullptr;
-            this->targetGood = nullptr;
-            this->path = nullptr;
+            this->resetStatus();
         }
 
         // “正常状态且正在前往取货”, 当前点处在货物位置，并取到货物：重置机器人状态为“正常状态且正在送货”
         if (this->targetGood != nullptr && this->goods == 1 && this->p == this->targetGood->p) {
-            this->targetBerth = this->targetGood->targetBerth;
-            this->path->resetHead();
-            this->path = this->targetGood->pathToTargetBerth;
-            this->path->printPath();
-            this->path->resetHead();
-            this->targetGood = nullptr;
+            this->setTargetBerth(this->targetGood);
         }
     }
 
@@ -658,6 +666,7 @@ struct Robot {
 
             if (this->targetBerth != nullptr && this->targetBerth->p == nextPoint) {
                 this->pull = true;
+                this->targetBerth->goodValue += this->value;
                 outGetPull << "robot:" << id << " setget" << endl;
             }
 
@@ -688,6 +697,8 @@ struct Robot {
         }
         // 计算 货物价值 / (机器人到货物的距离 + 货物到泊位的距离)，按顺序检查是否可以在货物消失前搬运
         CalcPath(this->p, goodsPoint);
+        Good* tempTargetGood;
+        Path* tempPathToGood;
         double vpdToTargetBerth = 0.0;   // Value per dis
         for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
             if (!curr->good.hasRobotLocked && curr->good.pathToTargetBerth != nullptr) {
@@ -697,10 +708,11 @@ struct Robot {
                 int dis = pathToGood->getDis();
                 double valuePerDis = curr->good.value / (curr->good.pathToTargetBerth->getDis() + dis);
                 if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_FRAME)) {
-                    vpdToTargetBerth = valuePerDis;
+                    vpdToTargetBerth = valuePerDis; // TODO: 不应该在找货物的时候就锁定货物
                     this->targetGood = &curr->good;
                     this->targetGood->hasRobotLocked = true; // 锁定货物
                     this->path = pathToGood;
+                    this->value = this->targetGood->value;  // 记录货物的价值
                 }
             }
         }
@@ -801,6 +813,13 @@ void HandleFrame(int frame) {
 //            --curr->good.restFrame;       // 货物剩余时间-1
 //        }
 //    }
+    if (frame % 999 == 0) {
+        int total_value = 0;
+        for (int i = 0; i < BERTH_NUM; i++) {
+            total_value += g_berths[i].goodValue;
+        }
+        logBoat << "Total value in berths(" << frame << "): " << total_value << endl;
+    }
     return;
 }
 
@@ -816,8 +835,8 @@ void Init() {
     for (int i = 0; i < BERTH_NUM; i++) {
         int id;
         scanf("%d", &id);
-        scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transport_time,
-              &g_berths[id].loading_speed);
+        scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transportTime,
+              &g_berths[id].loadingSpeed);
         g_berths[id].Init();    // 初始化
         berthsPullPoint[g_berths[id].pullP.x][g_berths[id].pullP.y] = 1;
 
