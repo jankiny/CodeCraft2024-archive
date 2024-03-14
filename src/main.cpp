@@ -95,7 +95,7 @@ const Point INVALID_POINT = {-1, -1};       // 无效点
 
 struct Path {
     Point path[MAX_PATH_STEP];  // 路径经过的点
-    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {} // TODO：dis(1)可能会导致BUG
+    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {} // TODO：dis(1 )可能会导致BUG
 
     void printPath() {
         outHit << "--------printPath" << dis << endl;
@@ -507,7 +507,7 @@ struct GoodList {   // 货物清单
 
     void deleteTimeOut(int frame){
         GoodNode *cur = head->next;
-        while(cur->good.startFrame + STOP_Frame < frame){
+        while(cur->good.startFrame + STOP_FRAME < frame){
             GoodNode* tmp = cur;
             cur = cur->next;
             deleteGood(tmp);
@@ -696,7 +696,7 @@ struct Robot {
 
                 int dis = pathToGood->getDis();
                 double valuePerDis = curr->good.value / (curr->good.pathToTargetBerth->getDis() + dis);
-                if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_Frame)) {
+                if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_FRAME)) {
                     vpdToTargetBerth = valuePerDis;
                     this->targetGood = &curr->good;
                     this->targetGood->hasRobotLocked = true; // 锁定货物
