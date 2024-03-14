@@ -315,7 +315,7 @@ bool getPath(Point p){
 void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
     queue<Point> q;
     q.push(start);
-    Point prev[MAP_REAL_SIZE][MAP_REAL_SIZE];   // 记录前驱节点，用于重建从起点到该终点的最短路径
+    Point prev[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   // 记录前驱节点，用于重建从起点到该终点的最短路径
     // 初始化prev数组
     for (int i = 0; i < MAP_REAL_SIZE; i++) {
         for (int j = 0; j < MAP_REAL_SIZE; j++) {
@@ -620,11 +620,18 @@ struct Robot {
 
         //&& this->path->checkCurrPoint(p)F
 
-        outFile << " before check " << (this->path != nullptr) << endl;
-        if (this->path != nullptr && this->path->checkCurrPoint(p)) {
+        if(this->path == nullptr){
+            move = -1;
+            return;
+        }
+        if(this->path->checkCurrPoint(p) == false){
+            this->targetBerth = nullptr;
+            this->targetGood = nullptr;
+            this->path = nullptr;
+        }
+        else {
             auto nextPoint = path->getNextPoint();
 
-            outFile << " nextPoint " << nextPoint.x<<" "<<nextPoint.y<< endl;
             if(CanHit(nextPoint)){
 
                 nextPoint = path->getBeforePoint();
@@ -674,8 +681,7 @@ struct Robot {
             return;
 
         }
-        // TODO：走错就重新规划
-        move = -1;
+
     }
 
     void FindSuitableGood(int frame) {
@@ -699,25 +705,29 @@ struct Robot {
 
 
 
-
         CalcPath(this->p, goodsPoint);
-
         double vpdToTargetBerth = 0.0;   // Value per dis
+        Good* tmp;
         for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
             if (!curr->good.hasRobotLocked) {
+
                 auto pathToGood = FindPath(this->p, curr->good.p);
                 if (pathToGood == nullptr) continue;    // 货物不可达
                 int dis = pathToGood->getDis();
                 double valuePerDis = curr->good.value / (curr->good.pathToTargetBerth->getDis() + dis);
                 if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_Frame)) {
+                    outFile <<" --point-- "<< curr->good.p.x << " " << curr->good.p.y << endl;
                     vpdToTargetBerth = valuePerDis;
                     this->targetGood = &curr->good;
                     this->value = curr->good.value;
-                    this->targetGood->hasRobotLocked = true; // 锁定货物
+                    //this->targetGood->hasRobotLocked = true; // 锁定货物
+                    tmp = this->targetGood;
                     this->path = pathToGood;
                 }
             }
         }
+
+        tmp->hasRobotLocked = true;
 
 
         //outFile << "----------------" << (this->targetGood != nullptr) << " " << vpdToTargetBerth << endl;
@@ -749,7 +759,7 @@ bool CanHit(Point np){
 
 void HandleFrame(int frame) {
     //删除超时节点
-    g_goodList.deleteTimeOut(frame);
+    g_goodList.deleteTimeOut(frame-500);
 
     // 为新增的每个货物找到最近的泊位（避免重复计算）
     for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
@@ -766,9 +776,6 @@ void HandleFrame(int frame) {
 
         outFile << "------------status robot" << i << " :" << g_robots[i].status << " " << g_robots[i].goods << " "
                 << (g_robots[i].getTargetGood() != nullptr) << " " << (g_robots[i].getTargetBerth() != nullptr) << endl;
-
-        outHit << "----status robot" << i << " :" << g_robots[i].status << " " << g_robots[i].goods << " "
-               << (g_robots[i].getTargetGood() != nullptr) << " " << (g_robots[i].getTargetBerth() != nullptr) << endl;
 
         // 对机器人的四个状态进行处理
         if (g_robots[i].status == 0) continue;  // 恢复状态
@@ -828,12 +835,14 @@ void InitPre(){
             Pre[i][j] = INVALID_POINT;
         }
     }
-    bool visited[MAP_REAL_SIZE][MAP_REAL_SIZE] = {};
+    bool visited[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
+    memset(visited,false,sizeof(visited));
     for(int i = 0;i < BERTH_NUM;i++){
         Point start(g_berths[i].p.x,g_berths[i].p.y);
         q.push((start));
         visited[start.x][start.y] = true;
         Pre[start.x][start.y] = start;
+        outFile <<" init pre" << start.x <<" "<<start.y <<endl;
     }
 
     while (!q.empty()) {
@@ -841,13 +850,14 @@ void InitPre(){
         q.pop();
         for (int i = 0; i < 4; ++i) {
             Point next(cur.x + DIRECTION_TO_GO[i][0], cur.y + DIRECTION_TO_GO[i][1]);
-            if (IsValid(next.x, next.y) && !visited[next.x][next.y]) {
+            if (IsValid(next.x, next.y) && !(visited[next.x][next.y])) {
                 visited[next.x][next.y] = true;
                 Pre[next.x][next.y] = cur; // 记录到达next的前驱节点是cur
                 q.push(next);
             }
         }
     }
+
 
 //    for (int i = 0; i < MAP_REAL_SIZE; i++) {
 //        for (int j = 0; j < MAP_REAL_SIZE; j++) {
