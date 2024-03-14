@@ -8,4 +8,4 @@ endif (!WIN32)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXE_LINKER_FLAGS "-static")
 
-add_executable(CodeCraft2024 src/main.cpp)
+add_executable(CodeCraft2024 src/main2.cpp)

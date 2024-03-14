@@ -15,25 +15,27 @@
 #include <fstream>
 #include <iomanip>
 #include <string>
+
 using namespace std;
 
 ofstream outFile("log.txt", ios::trunc);                  //日志文件
 ofstream outGetPull("log_get_pull.txt", ios::trunc);
 ofstream outHit("log_hit.txt", ios::trunc);
+ofstream logBoat("log_boat.txt", ios::trunc);
 const double EPS = 1e-7;                        // 浮点数精度
 const double FRAME_COUNT = 50;                  // 1s帧数
 const int TOTAL_FRAME = 15000;                   // 总帧数
-const int STOP_FRAME = 980;                          //停留时间
+const int STOP_FRAME = 980;                     // 停留时间，20帧用于掉帧冗余
+const int LIMIT_LOAD_FRAME = TOTAL_FRAME - 150;  // 终止装货的帧数
 
-//const int LIMIT_BUY_FRAME = TOTAL_FRAME - 150;  // 终止购买物品的帧数
 const int MAP_ARRAY_SIZE = 210;                 // 地图数组大小，预留一点空间
 const int MAP_REAL_SIZE = 200;                  // 地图的真实大小
 const int ROBOT_NUM = 10;                       // 机器人的数量
-const int BOAT_NUM = 10;                        // 轮船的数量
+const int BOAT_NUM = 5;                        // 轮船的数量
 const int BERTH_NUM = 10;                       // 泊位的数量
 const int MAX_GOOD_NUM = MAP_REAL_SIZE * MAP_REAL_SIZE + 10;    // 货物的最大数量，预留点空间
 const int TOP_K_SELECTED_BERTH_NUM = 2;         // 筛选距离最近的K个Berth
-const int MAX_PATH_STEP = 10 * MAP_REAL_SIZE + MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈) + 倒退预留大小
+const int MAX_PATH_STEP = 4 * MAP_REAL_SIZE + MAP_REAL_SIZE;    // 最大的路程距离(绕地图一圈) + 倒退预留大小
 const int MAX_RESET_PATH_STEP = 10;             // 最大纠正步数
 //const double DIS_INTERSECT_EPS = 0.5;           // 相交距离误差
 //const double AVOID_ANGLE_SPEED_DIFF = M_PI / 8; // 避让时让角速度偏移的差值
@@ -77,7 +79,6 @@ struct Point {
 bool CanHit(Point np);
 
 
-
 Point Pre[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 const int DIRECTION[4] = {
         0,  // 右移一格
@@ -88,19 +89,18 @@ const int DIRECTION[4] = {
 
 // 方向数组，用于表示上下左右四个方向
 const int DIRECTION_TO_GO[4][2] = {
-        {0,  1},     // 右移一格
-        {0,  -1},    // 左移一格
+        {0, 1},     // 右移一格
+        {0, -1},    // 左移一格
         {-1, 0},    // 上移一格
-        {1,  0}      // 下移一格
+        {1, 0}      // 下移一格
 };
-
 
 
 const Point INVALID_POINT = {-1, -1};       // 无效点
 
 struct Path {
     Point path[MAX_PATH_STEP];  // 路径经过的点
-    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {}
+    Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {} // TODO：dis(1 )可能会导致BUG
 
     void printPath() {
         for (int i = MAP_REAL_SIZE; i < pathRear; ++i) {
@@ -110,9 +110,10 @@ struct Path {
     }
 
     bool checkCurrPoint(const Point &p) {
-        outFile<< " -------- check Curr Point --------" << p.x <<" "<< p.y <<" pathHead:"<< pathHead << " "<< path[pathHead].x <<" "<<path[pathHead].y << endl;
+        outFile << " -------- check Curr Point --------" << p.x << " " << p.y << " pathHead:" << pathHead << " "
+                << path[pathHead].x << " " << path[pathHead].y << endl;
 
-        if(p != path[pathHead])printPath();
+        if (p != path[pathHead])printPath();
 
         if (pathHead == MAP_REAL_SIZE || p == path[pathHead])
             return true;
@@ -132,22 +133,22 @@ struct Path {
         }
     }
 
-    Point getBeforePoint(){ // TODO
+    Point getBeforePoint() { // TODO
         pathHead = pathHead - 2;
 
-        if(path[pathHead].x == -1){
+        if (path[pathHead].x == -1) {
             bool flag = false;
-            for(int i = 0;i < 4;i++){
-                Point tmp(path[pathHead+1].x+DIRECTION_TO_GO[i][0], path[pathHead+1].y+DIRECTION_TO_GO[i][1]);
-                if(IsValid(tmp.x, tmp.y) && !CanHit(tmp)){
+            for (int i = 0; i < 4; i++) {
+                Point tmp(path[pathHead + 1].x + DIRECTION_TO_GO[i][0], path[pathHead + 1].y + DIRECTION_TO_GO[i][1]);
+                if (IsValid(tmp.x, tmp.y) && !CanHit(tmp)) {
                     flag = true;
                     path[pathHead].x = tmp.x;
                     path[pathHead].y = tmp.y;
                     break;
                 }
             }
-            outFile <<" out of range " <<" ========================================== " << endl;
-            if(!flag)pathHead++;
+            outFile << " out of range " << " ========================================== " << endl;
+            if (!flag)pathHead++;
         }
         return path[pathHead];
     }
@@ -172,7 +173,7 @@ struct Path {
     void reversePath() {
 
         //outFile << "pathHead（" << pathHead <<"）(pathRear - pathHead) / 2 + pathHead " << (pathRear - pathHead) / 2 + pathHead <<endl;
-        for (int i = pathHead; i < (pathRear - pathHead) / 2 + pathHead ; ++i) {
+        for (int i = pathHead; i < (pathRear - pathHead) / 2 + pathHead; ++i) {
             // 交换元素，使用临时变量保存一个元素的值
             Point temp = path[i];
             path[i] = path[pathRear - 1 - i + pathHead];
@@ -184,16 +185,17 @@ struct Path {
 
     void resetHead() {
         this->pathHead = 200;
-        int tmp = pathHead-1;
-        while(path[tmp].x != -1){
+        int tmp = pathHead - 1;
+        while (path[tmp].x != -1) {
             path[tmp].x = -1;
             tmp--;
         }
     }
 
-    Point finallyPonit(){
-        return path[pathRear-1];
+    Point finallyPonit() {
+        return path[pathRear - 1];
     }
+
     int pathHead;               // path头
     int pathRear;               // path尾
     int dis;                    // 路径的总距离
@@ -243,12 +245,17 @@ struct Berth {
     int id;
     Point p;
     Point pullP;
-    int transport_time;
-    int loading_speed;
+    int transportTime;  // 表示该泊位轮船运输到虚拟点的时间
+    int loadingSpeed;   // 表示该泊位的装载速度，即每帧可以装载的物品数，单位(个)
+    int stackGoodNum;   // 堆积的货物数量
+    bool hasBoatLocked; // 是否有船占用
 
-    Berth() {}
+    Berth() {
+        hasBoatLocked = false;
+    }
 
     void Init() {
+        this->stackGoodNum = 0;
         FixPos(this->p);  // 得到的位置是从0开始的，+1与地图保持一致
         CalcPullPoint();
     }
@@ -261,14 +268,6 @@ private:
     }
 };
 
-struct Boat {
-    int id;
-    int capacity;
-    int berthId;        // 表示目标泊位
-    int status;     // 状态(0表示运输中；1表示正常运行状态，即装货中或运输完成；2表示泊位外等待)
-
-};
-
 
 char g_ok[100];
 int g_frameId;
@@ -277,8 +276,6 @@ int g_boatCapacity;
 Berth g_berths[BERTH_NUM];
 //vector<Point> berthsPullPoint(BERTH_NUM); // Init时将Berth的位置进行打包，便于在创建Good时计算最近的Berth
 int berthsPullPoint[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
-
-Boat g_boats[BOAT_NUM];
 
 template<>
 struct std::hash<Point> {
@@ -291,25 +288,74 @@ struct std::hash<Point> {
 unordered_map<long long, Path> hash_paths; // 两点最短路径的Cache
 unordered_map<Point, Path> back_paths; // 两点最短路径的Cache
 
-bool getPath(Point p){
-    if(Pre[p.x][p.y] == INVALID_POINT){
+bool getPath(Point p) {
+    if (Pre[p.x][p.y] == INVALID_POINT) {
         return false;
     }
     if (back_paths.find(p) == back_paths.end()) { // 如果路径未被记录
         Path path;
         Point cur = p;
-        while(cur != Pre[cur.x][cur.y]){
+        while (cur != Pre[cur.x][cur.y]) {
             path.addPoint(cur);
             cur = Pre[cur.x][cur.y];
         }
-
         path.addPoint(cur);
-        //path.reversePath();
         back_paths[p] = path;
         return true;
     }
     return true;
 }
+
+
+struct Boat {
+    int id;
+    int capacity;
+    int berthId;        // 表示目标泊位
+    int status;     // 状态(0表示运输中；1表示正常运行状态，即装货中或运输完成；2表示泊位外等待)
+    int finishTransportFrame; // 运输结束时间
+
+    // 船的状态
+    // 运输状态（status == 0）：不管它
+    //
+    Boat() {
+        finishTransportFrame = 0;
+    }
+
+    int FindSuitableBerth() {
+//        logBoat << "------Function: FindSuitableBerth()" << endl;
+        Berth *tmpBerth;
+        int tmpStackGoodNum = 0;
+        this->berthId = -1;
+        for (int i = 0; i < BERTH_NUM; i++) {
+//            logBoat << "berth(" << i << "): " <<
+//                    "!hasBoatLocked(" << !g_berths[i].hasBoatLocked << ") " <<
+//                    "stackGoodNum(" << g_berths[i].stackGoodNum << ")" << endl;
+            if (!g_berths[i].hasBoatLocked && g_berths[i].stackGoodNum > tmpStackGoodNum) {
+                tmpBerth = &g_berths[i];
+                this->berthId = tmpBerth->id;
+//                logBoat << "Found berth(" << i << ")" << tmpBerth->id << endl;
+            }
+        }
+        if (tmpBerth != nullptr) {
+            tmpBerth->hasBoatLocked = true;
+            return tmpBerth->id;
+        }
+
+//        logBoat << "------Function: FindSuitableBerth() end" << endl;
+        return -1;
+    }
+};
+
+Boat g_boats[BOAT_NUM];
+
+
+//         path.addPoint(cur);
+//         //path.reversePath();
+//         back_paths[p] = path;
+//         return true;
+//     }
+//     return true;
+// }
 
 // bfs算法查找单源最短路径，结果存在hash_paths中(使用findPath来查找)
 void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
@@ -324,7 +370,7 @@ void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
     }
     prev[start.x][start.y] = start; // 起点的前驱是自己
     bool visited[MAP_REAL_SIZE][MAP_REAL_SIZE] = {};
-    memset(visited,false,sizeof(visited));
+    memset(visited, false, sizeof(visited));
     visited[start.x][start.y] = true;
 
     while (!q.empty()) {
@@ -333,7 +379,7 @@ void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
 
         //outFile<<"--- CalcPath ---" << cur.x << " " << cur.y << endl;
         if (endPoints[cur.x][cur.y] == -1) {
-            Point endPoint(cur.x,cur.y);
+            Point endPoint(cur.x, cur.y);
 
             long long hashKey = HashTwoPoints(start, endPoint);
             //outFile<<"--- CalcPath end---" << cur.x << " " << cur.y <<" "<<(hash_paths.find(hashKey) == hash_paths.end())<< endl;
@@ -345,7 +391,6 @@ void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
                 }
 
                 path.addPoint(start);
-
 
 
                 path.reversePath();
@@ -409,7 +454,7 @@ struct Good {
     }
 
     void findBerth() {
-        if(!getPath(this->p)){
+        if (!getPath(this->p)) {
             this->canShip = false;
             return;
         }
@@ -419,12 +464,12 @@ struct Good {
         auto path = &(it->second);
         int dis = path->getDis();
 
-        outFile << "  Point " << path->finallyPonit().x << " " << path->finallyPonit().y<< endl;
+        outFile << "  Point " << path->finallyPonit().x << " " << path->finallyPonit().y << endl;
         //path->printPath();
 
 
-        for(auto &g_berth : g_berths){
-            if(path->finallyPonit() == g_berth.p){
+        for (auto &g_berth: g_berths) {
+            if (path->finallyPonit() == g_berth.p) {
                 this->targetBerth = &g_berth;
             }
         }
@@ -500,21 +545,19 @@ struct GoodList {   // 货物清单
         }
     }
 
-    void deleteTimeOut(int frame){
+    void deleteTimeOut(int frame) {
         GoodNode *cur = head->next;
-        while(cur->good.startFrame + STOP_FRAME < frame){
-            GoodNode* tmp = cur;
+        while (cur->good.startFrame + STOP_FRAME < frame) {
+            GoodNode *tmp = cur;
             cur = cur->next;
             deleteGood(tmp);
         }
     }
 
 
-
 private:
     int length;
 } g_goodList;
-
 
 
 struct Robot {
@@ -523,13 +566,14 @@ struct Robot {
     Point p;             // 当前坐标
     int goods;          // 是否携带物品（0表示未携带物品，1表示携带物品）
     int status;         // 状态（0表示恢复状态，1表示正常运行状态）
-    int value = 0;
+    int value = 0;          // 携带的货物价值
     Path *path;                  // 路径
     int move;                   // 移动方向
 
     // 目标货物
     void setTargetGood(Good &good) {
         this->targetGood = &good;
+        this->value = this->targetGood->value;      // 记录货物价值
         this->targetBerth = nullptr;
     }
 
@@ -540,8 +584,12 @@ struct Robot {
     bool get;                   // 是否取货
 
     // 目标泊位
-    void setTargetBerth(Berth &berth) {
-        this->targetBerth = &berth;
+    void setTargetBerth(Good *good) {
+        this->targetBerth = good->targetBerth;
+        this->path->resetHead();
+        this->path = good->pathToTargetBerth;
+        this->path->printPath();
+        this->path->resetHead();
         this->targetGood = nullptr;
     }
 
@@ -562,8 +610,15 @@ struct Robot {
         targetBerth = nullptr;
         goods = 0;
         status = 1;
+        value = 0;
     }
 
+    void resetStatus() {
+        this->targetBerth = nullptr;
+        this->targetGood = nullptr;
+        this->path = nullptr;
+        this->value = 0;    // 清除携带货物价值
+    }
 
 
     void CheckStatus() {
@@ -574,16 +629,12 @@ struct Robot {
         if (status == 0) return;
         // 当前处在“正常状态且正在送货”, 当前点处在泊位，货物已送出：重置机器人状态为“正常状态但没有分配任务”
         if (this->targetBerth != nullptr && this->goods == 0 && this->p == this->targetBerth->pullP) {
-            this->targetBerth = nullptr;
-            this->targetGood = nullptr;
-            this->path = nullptr;
+            this->resetStatus();
         }
 
         // 错误状态   取货超时
-        if(this->targetBerth != nullptr && this->goods == 0 && this->p != this->targetBerth->pullP){
-            this->targetBerth = nullptr;
-            this->targetGood = nullptr;
-            this->path = nullptr;
+        if (this->targetBerth != nullptr && this->goods == 0 && this->p != this->targetBerth->pullP) {
+            this->resetStatus();
         }
 
         // “正常状态且正在前往取货”, 当前点处在货物位置，并取到货物：重置机器人状态为“正常状态且正在送货”
@@ -599,7 +650,6 @@ struct Robot {
             this->targetGood = nullptr;
         }
     }
-
 
 
     void CalcNextStep() {
@@ -620,33 +670,30 @@ struct Robot {
 
         //&& this->path->checkCurrPoint(p)F
 
-        if(this->path == nullptr){
+        if (this->path == nullptr) {
             move = -1;
             return;
         }
-        if(this->path->checkCurrPoint(p) == false){
+        if (this->path->checkCurrPoint(p) == false) {
             this->targetBerth = nullptr;
             this->targetGood = nullptr;
             this->path = nullptr;
-        }
-        else {
+        } else {
             auto nextPoint = path->getNextPoint();
 
-            if(CanHit(nextPoint)){
+            if (CanHit(nextPoint)) {
 
                 nextPoint = path->getBeforePoint();
                 //TODO
-                if(CanHit(nextPoint)){
+                if (CanHit(nextPoint)) {
                     move = -1;
                     path->pathHead++;
                     return;
-                }
-
-                else {
+                } else {
                     move = CalcMoveDirection(nextPoint);
                     this->p.x = nextPoint.x;
                     this->p.y = nextPoint.y;
-                    outFile << " ============ " << this->p.x <<" " << this->p.y << endl;
+                    outFile << " ============ " << this->p.x << " " << this->p.y << endl;
                     return;
                 }
             }
@@ -668,10 +715,13 @@ struct Robot {
                 outGetPull << "------------" << this->targetBerth->p.x << " " << this->targetBerth->p.y << endl;
 
 
-            if(this->targetBerth!=nullptr)outFile << " TTTTTT " << this->targetBerth->p.x <<" " << this->targetBerth->p.y <<" "<<nextPoint.x <<" "<<nextPoint.y <<endl;
+            if (this->targetBerth != nullptr)
+                outFile << " TTTTTT " << this->targetBerth->p.x << " " << this->targetBerth->p.y << " " << nextPoint.x
+                        << " " << nextPoint.y << endl;
 
             if (this->targetBerth != nullptr && this->targetBerth->p == nextPoint) {
                 this->pull = true;
+                this->targetBerth->stackGoodNum += 1;
                 outGetPull << "robot:" << id << " setget" << endl;
             }
 
@@ -692,8 +742,7 @@ struct Robot {
         int i = 0;
 
         int goodsPoint[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
-        memset(goodsPoint,-2,sizeof(goodsPoint));
-
+        memset(goodsPoint, -2, sizeof(goodsPoint));
 
 
         for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
@@ -703,11 +752,11 @@ struct Robot {
         }
         // 计算 货物价值 / (机器人到货物的距离 + 货物到泊位的距离)，按顺序检查是否可以在货物消失前搬运
 
-
-
         CalcPath(this->p, goodsPoint);
+        Good *tempTargetGood;
+        Path *tempPathToGood;
         double vpdToTargetBerth = 0.0;   // Value per dis
-        Good* tmp = nullptr;
+        Good *tmp = nullptr;
         for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
             if (!curr->good.hasRobotLocked) {
 
@@ -715,22 +764,22 @@ struct Robot {
                 if (pathToGood == nullptr) continue;    // 货物不可达
                 int dis = pathToGood->getDis();
                 double valuePerDis = curr->good.value / (curr->good.pathToTargetBerth->getDis() + dis);
-                if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_FRAME)) {
-                    outFile <<" --point-- "<< curr->good.p.x << " " << curr->good.p.y << endl;
+                if (targetGood == nullptr ||
+                    (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_FRAME)) {
+                    outFile << " --point-- " << curr->good.p.x << " " << curr->good.p.y << endl;
                     vpdToTargetBerth = valuePerDis;
                     this->targetGood = &curr->good;
                     this->value = curr->good.value;
                     //this->targetGood->hasRobotLocked = true; // 锁定货物
                     tmp = this->targetGood;
                     this->path = pathToGood;
+                    this->value = this->targetGood->value;  // 记录货物的价值
                 }
             }
         }
 
-        if (tmp != nullptr) {
+        if (tmp != nullptr)
             tmp->hasRobotLocked = true;
-            outFile << "hasRobotLocked(" << tmp->hasRobotLocked << endl;
-        }
 
 
         //outFile << "----------------" << (this->targetGood != nullptr) << " " << vpdToTargetBerth << endl;
@@ -750,10 +799,9 @@ private:
     }
 };
 
-
-bool CanHit(Point np){
-    for(int i = 0;i < ROBOT_NUM;i++){
-        if(np.x == g_robots[i].p.x && np.y == g_robots[i].p.y){
+bool CanHit(Point np) {
+    for (int i = 0; i < ROBOT_NUM; i++) {
+        if (np.x == g_robots[i].p.x && np.y == g_robots[i].p.y) {
             return true;
         }
     }
@@ -762,7 +810,7 @@ bool CanHit(Point np){
 
 void HandleFrame(int frame) {
     //删除超时节点
-    g_goodList.deleteTimeOut(frame-500);
+    g_goodList.deleteTimeOut(frame - 500);
 
     // 为新增的每个货物找到最近的泊位（避免重复计算）
     for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
@@ -802,7 +850,7 @@ void HandleFrame(int frame) {
 
         // 输出机器人控制指令
 
-        outFile << " after action: " << g_robots[i].move <<" "<<g_robots[i].get << " " << g_robots[i].pull << endl;
+        outFile << " after action: " << g_robots[i].move << " " << g_robots[i].get << " " << g_robots[i].pull << endl;
 
         if (g_robots[i].move != -1)
             printf("move %d %d\n", i, g_robots[i].move);
@@ -820,9 +868,65 @@ void HandleFrame(int frame) {
             COUNT_VALUE += g_robots[i].value;
         }
     }
+
+    logBoat << "-------------Berth Data" << endl;
+    for (int i = 0; i < BERTH_NUM; i++) {
+        logBoat << i << "stackGoodNum: " << g_berths[i].stackGoodNum << endl;
+    }
+
+    // 此处策略：
+    for (int i = 0; i < BOAT_NUM; i++) {    // 船(Boat)
+        if (frame + g_berths[g_boats[i].berthId].transportTime > LIMIT_LOAD_FRAME) {    // 没时间
+            logBoat << "No Time:" << frame + g_berths[g_boats[i].berthId].transportTime << endl;
+            g_berths[g_boats[i].berthId].hasBoatLocked = false;
+            printf("go %d\n", i);
+            g_boats[i].finishTransportFrame = frame + g_berths[g_boats[i].berthId].transportTime;
+        }
+
+        if (g_boats[i].status == 1 && g_boats[i].berthId == -1) {   // 起始状态
+            g_boats[i].FindSuitableBerth();
+            if (g_boats[i].berthId != -1) {
+                printf("ship %d %d\n", i, g_boats[i].berthId);
+                g_boats[i].capacity = 0;
+            }
+            logBoat << "Command(" << frame << "): ship " << i << " " << g_boats[i].berthId << endl;
+            continue;
+        }
+//        if (g_boats[i].status == 0 && frame > g_boats[i].finishTransportFrame) {
+//        }
+//        else
+        if (g_boats[i].status == 0) {
+            if (frame >= g_boats[i].finishTransportFrame) {
+                g_boats[i].FindSuitableBerth();
+                if (g_boats[i].berthId != -1) {
+                    printf("ship %d %d\n", i, g_boats[i].berthId);
+                    g_boats[i].capacity = 0;
+                    g_boats[i].finishTransportFrame = frame + g_berths[g_boats[i].berthId].transportTime;
+                }
+            } else if (frame < g_boats[i].finishTransportFrame)
+                continue;
+        } else if (g_boats[i].status == 1) {
+            if (g_berths[g_boats[i].berthId].stackGoodNum == 0) {  // 泊位没货了
+                g_berths[g_boats[i].berthId].hasBoatLocked = false;
+                g_boats[i].FindSuitableBerth();
+                if (g_boats[i].berthId != -1) {
+                    g_berths[g_boats[i].berthId].hasBoatLocked = true;
+                    printf("ship %d %d\n", i, g_boats[i].berthId);
+                }
+            } else if (g_boats[i].capacity != 100 && g_berths[g_boats[i].berthId].stackGoodNum != 0) {
+                g_boats[i].capacity += 1;
+                g_berths[g_boats[i].berthId].stackGoodNum -= 1;
+            } else if (g_boats[i].capacity == 100) {    // 装满
+                g_berths[g_boats[i].berthId].hasBoatLocked = false;
+                printf("go %d\n", i);
+                g_boats[i].finishTransportFrame = frame + g_berths[g_boats[i].berthId].transportTime;
+            }
+        }
+    }
+
     LOST_FRAME--;
 
-    outFile << " ========= Lost =====" << LOST_FRAME <<" "<< COUNT_VALUE << endl;
+    outFile << " ========= Lost =====" << LOST_FRAME << " " << COUNT_VALUE << endl;
 //    for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
 //        if (!curr->good.hasRobotLocked) {
 //            --curr->good.restFrame;       // 货物剩余时间-1
@@ -831,7 +935,7 @@ void HandleFrame(int frame) {
     return;
 }
 
-void InitPre(){
+void InitPre() {
     queue<Point> q;
     for (int i = 0; i < MAP_REAL_SIZE; i++) {
         for (int j = 0; j < MAP_REAL_SIZE; j++) {
@@ -839,13 +943,13 @@ void InitPre(){
         }
     }
     bool visited[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
-    memset(visited,false,sizeof(visited));
-    for(int i = 0;i < BERTH_NUM;i++){
-        Point start(g_berths[i].p.x,g_berths[i].p.y);
+    memset(visited, false, sizeof(visited));
+    for (int i = 0; i < BERTH_NUM; i++) {
+        Point start(g_berths[i].p.x, g_berths[i].p.y);
         q.push((start));
         visited[start.x][start.y] = true;
         Pre[start.x][start.y] = start;
-        outFile <<" init pre" << start.x <<" "<<start.y <<endl;
+        outFile << " init pre" << start.x << " " << start.y << endl;
     }
 
     while (!q.empty()) {
@@ -875,13 +979,15 @@ void Init() {
     outFile << "----------------init---------------" << endl;
     for (int i = 1; i <= MAP_REAL_SIZE; i++)
         scanf("%s", g_map[i] + 1);
-
-    memset(berthsPullPoint,-2,sizeof(berthsPullPoint));
+    // 泊位（Berth）数据
+    outFile << "----Berth" << endl;
+    memset(berthsPullPoint, -2, sizeof(berthsPullPoint));
     for (int i = 0; i < BERTH_NUM; i++) {
         int id;
         scanf("%d", &id);
-        scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transport_time,
-              &g_berths[id].loading_speed);
+        scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transportTime,
+              &g_berths[id].loadingSpeed);
+        g_berths[id].id = id;   // 存储id
         g_berths[id].Init();    // 初始化
         berthsPullPoint[g_berths[id].pullP.x][g_berths[id].pullP.y] = -1;
         outFile << g_berths[id].p.x << " " << g_berths[id].p.y << endl;
@@ -913,7 +1019,7 @@ int main() {
 
         outFile << g_frameId << " --------------------------------------------------------- " << endl;
 
-        outHit<< g_frameId << " --------------------------------------------------------- " << endl;
+        outHit << g_frameId << " --------------------------------------------------------- " << endl;
 
         int num;
         scanf("%d", &num);
@@ -946,10 +1052,12 @@ int main() {
 
         outFile << "----boat" << endl;
 
-        for (int i = 0; i < 5; i++) {    // 船(Boat)
+        for (int i = 0; i < BOAT_NUM; i++) {    // 船(Boat)
             g_boats[i].id = i;
 
             //outFile << "--------" << i << " :" << g_robots[i].status << " " << g_boats[i].berthId << endl;
+            outFile << "--------" << i << "  : berth(" << g_boats[i].berthId << ") status(" << g_boats[i].status << ")"
+                    << endl;
 
             scanf("%d%d\n", &g_boats[i].status, &g_boats[i].berthId);
         }
@@ -960,7 +1068,6 @@ int main() {
         puts("OK");
         fflush(stdout);
     }
-
 
 
     outFile.close();
