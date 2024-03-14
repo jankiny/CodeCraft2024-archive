@@ -42,9 +42,11 @@ const double PREDICT_FRAME = 15;                // 预测的帧数
 //const double MIN_ANGLE = 0.08; // 最小角度，用于判断朝向与目标点是否到夹角最小值，以控制不再旋转
 //const double MAX_DIS = 20000; // 最远距离
 int LOST_FRAME = 15000;
+int COUNT_VALUE = 0;
 struct Robot;
 vector<Robot> g_robots(ROBOT_NUM);
 char g_map[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
+
 // 检查坐标(x, y)是否在地图内以及是否可以走
 bool IsValid(int x, int y) {
     return x >= 0 && x < MAP_ARRAY_SIZE && y >= 0 && y < MAP_ARRAY_SIZE &&
@@ -74,6 +76,9 @@ struct Point {
 
 bool CanHit(Point np);
 
+
+
+Point Pre[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 const int DIRECTION[4] = {
         0,  // 右移一格
         1,  // 左移一格
@@ -98,15 +103,14 @@ struct Path {
     Path() : pathHead(MAP_REAL_SIZE), pathRear(MAP_REAL_SIZE), dis(1) {}
 
     void printPath() {
-        outHit << "--------printPath" << dis << endl;
         for (int i = MAP_REAL_SIZE; i < pathRear; ++i) {
-            outHit << "(" << path[i].x << "," << path[i].y << ")";
+            outFile << "(" << path[i].x << "," << path[i].y << ")";
         }
-        outHit << endl;
+        outFile << endl;
     }
 
     bool checkCurrPoint(const Point &p) {
-        outHit << " -------- check Curr Point --------" << p.x <<" "<< p.y <<" pathHead:"<< pathHead << " "<< path[pathHead].x <<" "<<path[pathHead].y << endl;
+        outFile<< " -------- check Curr Point --------" << p.x <<" "<< p.y <<" pathHead:"<< pathHead << " "<< path[pathHead].x <<" "<<path[pathHead].y << endl;
 
         if(p != path[pathHead])printPath();
 
@@ -166,7 +170,7 @@ struct Path {
 
     // 倒转路径点
     void reversePath() {
-        //printPath();
+
         //outFile << "pathHead（" << pathHead <<"）(pathRear - pathHead) / 2 + pathHead " << (pathRear - pathHead) / 2 + pathHead <<endl;
         for (int i = pathHead; i < (pathRear - pathHead) / 2 + pathHead ; ++i) {
             // 交换元素，使用临时变量保存一个元素的值
@@ -175,7 +179,7 @@ struct Path {
             path[pathRear - 1 - i + pathHead] = temp;
         }
         //outFile <<" afterReverse" << endl;
-        //printPath();
+
     }
 
     void resetHead() {
@@ -187,6 +191,9 @@ struct Path {
         }
     }
 
+    Point finallyPonit(){
+        return path[pathRear-1];
+    }
     int pathHead;               // path头
     int pathRear;               // path尾
     int dis;                    // 路径的总距离
@@ -269,10 +276,10 @@ int g_money;
 int g_boatCapacity;
 Berth g_berths[BERTH_NUM];
 //vector<Point> berthsPullPoint(BERTH_NUM); // Init时将Berth的位置进行打包，便于在创建Good时计算最近的Berth
-int berthsPullPoint[210][210];
+int berthsPullPoint[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 
 Boat g_boats[BOAT_NUM];
-unordered_map<long long, Path> hash_paths; // 两点最短路径的Cache
+
 template<>
 struct std::hash<Point> {
     size_t operator()(const Point &p) const {
@@ -281,13 +288,31 @@ struct std::hash<Point> {
     }
 };
 
+unordered_map<long long, Path> hash_paths; // 两点最短路径的Cache
+unordered_map<Point, Path> back_paths; // 两点最短路径的Cache
 
+bool getPath(Point p){
+    if(Pre[p.x][p.y] == INVALID_POINT){
+        return false;
+    }
+    if (back_paths.find(p) == back_paths.end()) { // 如果路径未被记录
+        Path path;
+        Point cur = p;
+        while(cur != Pre[cur.x][cur.y]){
+            path.addPoint(cur);
+            cur = Pre[cur.x][cur.y];
+        }
 
-
-
+        path.addPoint(cur);
+        //path.reversePath();
+        back_paths[p] = path;
+        return true;
+    }
+    return true;
+}
 
 // bfs算法查找单源最短路径，结果存在hash_paths中(使用findPath来查找)
-void CalcPath(Point start, int (&endPoints)[210][210]) {
+void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
     queue<Point> q;
     q.push(start);
     Point prev[MAP_REAL_SIZE][MAP_REAL_SIZE];   // 记录前驱节点，用于重建从起点到该终点的最短路径
@@ -299,53 +324,38 @@ void CalcPath(Point start, int (&endPoints)[210][210]) {
     }
     prev[start.x][start.y] = start; // 起点的前驱是自己
     bool visited[MAP_REAL_SIZE][MAP_REAL_SIZE] = {};
+    memset(visited,false,sizeof(visited));
     visited[start.x][start.y] = true;
 
     while (!q.empty()) {
         Point cur = q.front();
         q.pop();
 
-        if (endPoints[cur.x][cur.y] == 1) {
+        //outFile<<"--- CalcPath ---" << cur.x << " " << cur.y << endl;
+        if (endPoints[cur.x][cur.y] == -1) {
             Point endPoint(cur.x,cur.y);
+
             long long hashKey = HashTwoPoints(start, endPoint);
+            //outFile<<"--- CalcPath end---" << cur.x << " " << cur.y <<" "<<(hash_paths.find(hashKey) == hash_paths.end())<< endl;
             if (hash_paths.find(hashKey) == hash_paths.end()) { // 如果路径未被记录
                 Path path;
+
                 for (Point p = cur; p != start; p = prev[p.x][p.y]) {
                     path.addPoint(p);
                 }
+
                 path.addPoint(start);
+
+
+
                 path.reversePath();
                 hash_paths[hashKey] = path;
-//                    clog << "Find a path: ";
-//                    clog << "(" << start.x << "," << start.y << ")" << " --> ";
-//                    clog << "(" << endPoint.x << "," << endPoint.y << ")";
-//                    path.printPath();
+
             }
             continue;
         }
 
 
-
-        // 检查当前点是否是任一终点
-//        for (auto &endPoint: endPoints) {
-//            long long hashKey = HashTwoPoints(start, endPoint);
-//            if (cur == endPoint) {
-//                if (hash_paths.find(hashKey) == hash_paths.end()) { // 如果路径未被记录
-//                    Path path;
-//                    for (Point p = cur; p != start; p = prev[p.x][p.y]) {
-//                        path.addPoint(p);
-//                    }
-//                    path.addPoint(start);
-//                    path.reversePath();
-//                    hash_paths[hashKey] = path;
-////                    clog << "Find a path: ";
-////                    clog << "(" << start.x << "," << start.y << ")" << " --> ";
-////                    clog << "(" << endPoint.x << "," << endPoint.y << ")";
-////                    path.printPath();
-//                }
-//                continue;
-//            }
-//        }
 
         // 遍历四个方向
         for (int i = 0; i < 4; ++i) {
@@ -366,6 +376,8 @@ Path *FindPath(Point start, Point end) {
     if (it != hash_paths.end()) {
         return &it->second; // 返回找到的路径的引用
     } else {
+
+
         return nullptr;
     }
 }
@@ -397,46 +409,29 @@ struct Good {
     }
 
     void findBerth() {
-        // TODO: 通过两点直线距离作为预估距离，选择top-n个最近的货物
-//        vector<pair<double, Berth*>> distances;
-//        for (auto berth: g_berths) {
-//            double distance = CalcDis(this->p, berth.p);
-//        }
-//        sort(distances.begin(), distances.end(), [](const pair<double, Berth*>& a, const pair<double, Berth*>& b) {
-//            return a.first < b.first;
-//        });
-//        vector<Berth> selectedBerths;
-//        vector<Point> selectedBerthsPoint;
-//        for (int i = 0; i < TOP_K_SELECTED_BERTH_NUM && i < distances.size(); ++i) {
-//            selectedBerths.push_back(*distances[i].second);
-//            selectedBerthsPoint.push_back((*distances[i].second).p);
-//        }
-
-        // 计算Top-K直线距离的Berth
-
-        CalcPath(this->p, berthsPullPoint);
-
+        if(!getPath(this->p)){
+            this->canShip = false;
+            return;
+        }
 //        for (auto g_berth: g_berths) {
         // TODO: 检查Berth
-        for (auto & g_berth : g_berths) {
-            auto path = FindPath(this->p, g_berth.pullP);
-            if (path == nullptr) continue;  // 货物无法到达该泊位
+        auto it = back_paths.find(this->p);
+        auto path = &(it->second);
+        int dis = path->getDis();
 
-            int dis = path->getDis();
-            if (this->targetBerth == nullptr || dis < this->disToTargetBerth) {
+        outFile << "  Point " << path->finallyPonit().x << " " << path->finallyPonit().y<< endl;
+        //path->printPath();
+
+
+        for(auto &g_berth : g_berths){
+            if(path->finallyPonit() == g_berth.p){
                 this->targetBerth = &g_berth;
-
-                this->disToTargetBerth = dis;
-                this->pathToTargetBerth = path;
             }
         }
 
-        // 没有可以到达的Berth，货物不可运送
-        if (targetBerth == nullptr)
-            this->canShip = false;
-        else {
-            //outGetPull << "findBerth berth_x_y:" << this->targetBerth->p.x << " " << this->targetBerth->p.y << endl;
-        }
+        this->disToTargetBerth = dis;
+        this->pathToTargetBerth = path;
+
     }
 };
 
@@ -528,7 +523,7 @@ struct Robot {
     Point p;             // 当前坐标
     int goods;          // 是否携带物品（0表示未携带物品，1表示携带物品）
     int status;         // 状态（0表示恢复状态，1表示正常运行状态）
-
+    int value = 0;
     Path *path;                  // 路径
     int move;                   // 移动方向
 
@@ -569,6 +564,8 @@ struct Robot {
         status = 1;
     }
 
+
+
     void CheckStatus() {
         FixPos(this->p);  // 得到的位置是从0开始的，+1与地图保持一致
         this->move = -1;              // -1表示不对机器人下达指令
@@ -593,8 +590,11 @@ struct Robot {
         if (this->targetGood != nullptr && this->goods == 1 && this->p == this->targetGood->p) {
             this->targetBerth = this->targetGood->targetBerth;
             this->path->resetHead();
+
+            //getPath(p);
             this->path = this->targetGood->pathToTargetBerth;
-            this->path->printPath();
+
+
             this->path->resetHead();
             this->targetGood = nullptr;
         }
@@ -603,6 +603,7 @@ struct Robot {
 
 
     void CalcNextStep() {
+
         // TODO: 矫正path step
 //        int reset_step = -1;
 //        for (int i = 1; i <= MAX_RESET_PATH_STEP; ++i) {
@@ -618,9 +619,12 @@ struct Robot {
         //if(this->path != nullptr)outFile << " checkCurr" << " " << this->path->checkCurrPoint(p) <<endl;
 
         //&& this->path->checkCurrPoint(p)F
+
+        outFile << " before check " << (this->path != nullptr) << endl;
         if (this->path != nullptr && this->path->checkCurrPoint(p)) {
             auto nextPoint = path->getNextPoint();
 
+            outFile << " nextPoint " << nextPoint.x<<" "<<nextPoint.y<< endl;
             if(CanHit(nextPoint)){
 
                 nextPoint = path->getBeforePoint();
@@ -656,6 +660,9 @@ struct Robot {
             if (this->targetBerth != nullptr)
                 outGetPull << "------------" << this->targetBerth->p.x << " " << this->targetBerth->p.y << endl;
 
+
+            if(this->targetBerth!=nullptr)outFile << " TTTTTT " << this->targetBerth->p.x <<" " << this->targetBerth->p.y <<" "<<nextPoint.x <<" "<<nextPoint.y <<endl;
+
             if (this->targetBerth != nullptr && this->targetBerth->p == nextPoint) {
                 this->pull = true;
                 outGetPull << "robot:" << id << " setget" << endl;
@@ -678,32 +685,40 @@ struct Robot {
         // TODO: 通过两点直线距离作为预估距离，选择top-n个最近的货物
         int i = 0;
 
-        int goodsPoint[210][210];
-        memset(goodsPoint,0,sizeof(goodsPoint));
+        int goodsPoint[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
+        memset(goodsPoint,-2,sizeof(goodsPoint));
+
+
 
         for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
             if (!curr->good.hasRobotLocked && curr->good.canShip) {
-                goodsPoint[curr->good.p.x][curr->good.p.y] = 1;
+                goodsPoint[curr->good.p.x][curr->good.p.y] = -1;
             }
         }
         // 计算 货物价值 / (机器人到货物的距离 + 货物到泊位的距离)，按顺序检查是否可以在货物消失前搬运
+
+
+
+
         CalcPath(this->p, goodsPoint);
+
         double vpdToTargetBerth = 0.0;   // Value per dis
         for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
-            if (!curr->good.hasRobotLocked && curr->good.pathToTargetBerth != nullptr) {
+            if (!curr->good.hasRobotLocked) {
                 auto pathToGood = FindPath(this->p, curr->good.p);
                 if (pathToGood == nullptr) continue;    // 货物不可达
-
                 int dis = pathToGood->getDis();
                 double valuePerDis = curr->good.value / (curr->good.pathToTargetBerth->getDis() + dis);
                 if (targetGood == nullptr || (valuePerDis > vpdToTargetBerth && frame + dis < curr->good.startFrame + STOP_Frame)) {
                     vpdToTargetBerth = valuePerDis;
                     this->targetGood = &curr->good;
+                    this->value = curr->good.value;
                     this->targetGood->hasRobotLocked = true; // 锁定货物
                     this->path = pathToGood;
                 }
             }
         }
+
 
         //outFile << "----------------" << (this->targetGood != nullptr) << " " << vpdToTargetBerth << endl;
     }
@@ -735,11 +750,11 @@ bool CanHit(Point np){
 void HandleFrame(int frame) {
     //删除超时节点
     g_goodList.deleteTimeOut(frame);
+
     // 为新增的每个货物找到最近的泊位（避免重复计算）
     for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
         if (curr->good.canShip && curr->good.targetBerth == nullptr) {
             curr->good.findBerth();
-
 //            outGetPull << "123currGoodTargetBerth:" << (curr->good.targetBerth == nullptr)<<endl;
         }
     }
@@ -788,14 +803,16 @@ void HandleFrame(int frame) {
             outGetPull << "frame:" << frame << " robot:" << i << " get" << endl;
 
         } else if (g_robots[i].pull) {
+            //
             printf("pull %d\n", i);
 
             outGetPull << "frame:" << frame << " robot:" << i << " pull" << endl;
+            COUNT_VALUE += g_robots[i].value;
         }
     }
     LOST_FRAME--;
 
-    outFile << " ========= Lost =====" << LOST_FRAME << endl;
+    outFile << " ========= Lost =====" << LOST_FRAME <<" "<< COUNT_VALUE << endl;
 //    for (GoodNode *curr = g_goodList.head->next; curr != g_goodList.head; curr = curr->next) {
 //        if (!curr->good.hasRobotLocked) {
 //            --curr->good.restFrame;       // 货物剩余时间-1
@@ -804,27 +821,65 @@ void HandleFrame(int frame) {
     return;
 }
 
+void InitPre(){
+    queue<Point> q;
+    for (int i = 0; i < MAP_REAL_SIZE; i++) {
+        for (int j = 0; j < MAP_REAL_SIZE; j++) {
+            Pre[i][j] = INVALID_POINT;
+        }
+    }
+    bool visited[MAP_REAL_SIZE][MAP_REAL_SIZE] = {};
+    for(int i = 0;i < BERTH_NUM;i++){
+        Point start(g_berths[i].p.x,g_berths[i].p.y);
+        q.push((start));
+        visited[start.x][start.y] = true;
+        Pre[start.x][start.y] = start;
+    }
+
+    while (!q.empty()) {
+        Point cur = q.front();
+        q.pop();
+        for (int i = 0; i < 4; ++i) {
+            Point next(cur.x + DIRECTION_TO_GO[i][0], cur.y + DIRECTION_TO_GO[i][1]);
+            if (IsValid(next.x, next.y) && !visited[next.x][next.y]) {
+                visited[next.x][next.y] = true;
+                Pre[next.x][next.y] = cur; // 记录到达next的前驱节点是cur
+                q.push(next);
+            }
+        }
+    }
+
+//    for (int i = 0; i < MAP_REAL_SIZE; i++) {
+//        for (int j = 0; j < MAP_REAL_SIZE; j++) {
+//            outFile << setw(4) << Pre[i][j].x << " " <<setw(4)<< Pre[i][j].y <<" | ";
+//        }
+//        outFile << endl;
+//    }
+}
+
 void Init() {
     // 地图数据
     outFile << "----------------init---------------" << endl;
     for (int i = 1; i <= MAP_REAL_SIZE; i++)
         scanf("%s", g_map[i] + 1);
-    // 泊位（Berth）数据
-    outFile << g_map[3][113] << " " << g_map[6][116] << " " << g_map[172][3] << " " << g_map[175][6] << endl;
 
-    memset(berthsPullPoint,0,sizeof(berthsPullPoint));
+    memset(berthsPullPoint,-2,sizeof(berthsPullPoint));
     for (int i = 0; i < BERTH_NUM; i++) {
         int id;
         scanf("%d", &id);
         scanf("%d%d%d%d", &g_berths[id].p.x, &g_berths[id].p.y, &g_berths[id].transport_time,
               &g_berths[id].loading_speed);
         g_berths[id].Init();    // 初始化
-        berthsPullPoint[g_berths[id].pullP.x][g_berths[id].pullP.y] = 1;
-
+        berthsPullPoint[g_berths[id].pullP.x][g_berths[id].pullP.y] = -1;
         outFile << g_berths[id].p.x << " " << g_berths[id].p.y << endl;
     }
     // 船的容积
     scanf("%d", &g_boatCapacity);
+
+
+    InitPre();
+
+
     // 一行 OK
     char okk[100];
     scanf("%s", okk);
@@ -874,8 +929,6 @@ int main() {
 
             outFile << "--------" << i << "  :" << setw(3) << g_robots[i].goods << " " << setw(3) << g_robots[i].p.x
                     << " " << setw(3) << g_robots[i].p.y << " " << g_robots[i].status << endl;
-
-
         }
 
         outFile << "----boat" << endl;
