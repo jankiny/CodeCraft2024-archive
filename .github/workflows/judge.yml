@@ -36,10 +36,31 @@ jobs:
       run: |
         mkdir -p ${{github.workspace}}/judge-linux/maps
         curl -L https://raw.githubusercontent.com/jankiny/public-bucket/CodeCraft2024/judge-linux/maps/map1.txt > ${{github.workspace}}/judge-linux/maps/map1.txt
-      
-    # - name: List build directory contents
-    #   run: ls -lah ${{github.workspace}}/build
 
     - name: Run Preliminary Judge
       run: ${{github.workspace}}/judge-linux/PreliminaryJudge ${{github.workspace}}/build/CodeCraft2024 -m ${{github.workspace}}/judge-linux/maps/map1.txt
 
+    - name: Archive Replay and Logs
+      run: |
+        tar -czvf replay_and_logs.tar.gz -C ${{github.workspace}} replay log.txt
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.run_number }}
+        release_name: Release-${{ github.run_number }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Replay and Logs Archive
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{github.workspace}}/replay_and_logs.tar.gz
+        asset_name: replay_and_logs.tar.gz
+        asset_content_type: application/gzip
