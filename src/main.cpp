@@ -487,7 +487,7 @@ struct Robot {
         this->pull = false;
         if (status == 0) return;
         // 当前处在“正常状态且正在送货”, 当前点处在泊位，货物已送出：重置机器人状态为“正常状态但没有分配任务”
-        if (this->targetBerth != nullptr && this->goods == 0 && this->p == this->targetBerth->pullP) {
+        if (this->targetBerth != nullptr && this->goods == 0 && InBerth(this->targetBerth->p ,this->p)) {
             this->resetStatus();
         }
 
@@ -511,7 +511,7 @@ struct Robot {
     }
 
     bool InBerth(Point target, Point next) {
-        if (next.x >= target.x && next.x <= target.x + 4 && next.y >= target.y && next.y <= target.y + 4)return true;
+        if (next.x >= target.x && next.x <= target.x + 3 && next.y >= target.y && next.y <= target.y + 3)return true;
         return false;
     }
 
@@ -547,10 +547,16 @@ struct Robot {
             if (CanHit(nextPoint)) {
 
                 nextPoint = path->getBeforePoint();
-                //TODO
+
+                //TO ADD
+                if(nextPoint == p){
+                    move = -1;
+                    return;
+                }
+
                 if (CanHit(nextPoint)) {
                     move = -1;
-                    path->pathHead++;
+                    path->pathHead = path->pathHead + 1;
                     return;
                 } else {
                     move = CalcMoveDirection(nextPoint);
@@ -729,6 +735,7 @@ void CalcPath(Point start, int (&endPoints)[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE]) {
         if (endPoints[cur.x][cur.y] == -1) {
             Point endPoint(cur.x, cur.y);
 
+            if(endPoint == start)continue;
             long long hashKey = HashTwoPoints(start, endPoint);
             //outFile<<"--- CalcPath end---" << cur.x << " " << cur.y <<" "<<(hash_paths.find(hashKey) == hash_paths.end())<< endl;
             if (hash_paths.find(hashKey) == hash_paths.end()) { // 如果路径未被记录
