@@ -25,13 +25,21 @@ jobs:
     - name: Test
       working-directory: ${{github.workspace}}/build
       run: ctest -C ${{env.BUILD_TYPE}}
-    
-    - name: Grant execute permission to PreliminaryJudge
-      run: chmod +x ./judge-linux/PreliminaryJudge
+
+    - name: Download PreliminaryJudge
+      run: |
+        mkdir -p ${{github.workspace}}/judge-linux
+        curl -L https://raw.githubusercontent.com/jankiny/public-bucket/CodeCraft2024/judge-linux/PreliminaryJudge > ${{github.workspace}}/judge-linux/PreliminaryJudge
+        chmod +x ${{github.workspace}}/judge-linux/PreliminaryJudge
+
+    - name: Download Map File
+      run: |
+        mkdir -p ${{github.workspace}}/judge-linux/maps
+        curl -L https://raw.githubusercontent.com/jankiny/public-bucket/CodeCraft2024/judge-linux/maps/map1.txt > ${{github.workspace}}/judge-linux/maps/map1.txt
       
     # - name: List build directory contents
     #   run: ls -lah ${{github.workspace}}/build
 
     - name: Run Preliminary Judge
-      run: ./judge-linux/PreliminaryJudge ${{github.workspace}}/build/CodeCraft2024 -m ./judge-linux/maps/map1.txt
+      run: ${{github.workspace}}/judge-linux/PreliminaryJudge ${{github.workspace}}/build/CodeCraft2024 -m ${{github.workspace}}/judge-linux/maps/map1.txt
 
